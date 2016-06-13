@@ -1,0 +1,144 @@
+#!/bin/bash
+
+set -e
+
+if [[ -n $DEBUG ]]; then
+  set -x
+fi
+
+# Warn if current branch is not develop and/or not inline with upstream
+verify_branch() {
+  git fetch
+
+  if [ "develop" != "$(basename "$(git symbolic-ref -q HEAD)")" ]; then
+    echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓">&2
+    echo "┃   🚨  You are not on develop 🚨    ┃">&2
+    echo "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛">&2
+  fi
+
+  echo "==> Current commit id: $(git rev-parse HEAD)" >&2
+
+  count="$(git rev-list --count --left-right "@{upstream}...HEAD")"
+  case "$count" in
+    "")
+      echo "==> You do not have an upstream set" >&2 ;;
+    "0	0") 
+      return ;;
+    "0	"*)
+      echo "==> Your branch is ${count#0	} commits ahead of the upstream" >&2 ;;
+    *"	0")
+      echo "==> Your branch is ${count%	0} commits behind upstream" >&2 ;;
+    *)
+      echo "==> Your branch is ${count#*	} ahead and ${count#	*} behind upstream" >&2 ;;
+  esac
+
+  if [ "y" != "$(prompt "Do you wish to continue [y/N]: ")" ]; then
+    exit 1
+  fi
+}
+
+identify_repo() {
+  COMPONENT_NAME="$(basename "$PWD")"
+  REPOSITORY_NAME="dicefm/${COMPONENT_NAME}"
+}
+
+identify_release() {
+  BRANCH_NAME=$(branch_name)
+  if [[ ! "${BRANCH_NAME}" =~ ^release/.* ]]; then
+    echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓">&2
+    echo "┃   🚨 Not on a release branch 🚨   ┃">&2
+    echo "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛">&2
+    exit 1
+  fi
+  RELEASE_TAG="${BRANCH_NAME##*/}"
+}
+
+update_release_numbers() {
+  VERSION_NUMBER="$(update_version_number)"
+  RELEASE_NAME="$(prompt "Enter a name for this release: ${VERSION_NUMBER}-")"
+  RELEASE_TAG="${VERSION_NUMBER}-${RELEASE_NAME}"
+}
+
+create_release_branch() {
+  BRANCH_NAME="release/${RELEASE_TAG:?must be defined}"
+
+  echo "==> Creating branch ${BRANCH_NAME}"
+  git checkout -b "$BRANCH_NAME"
+}
+
+tag_release_notes() {
+  local temp_file
+  temp_file=$(mktemp)
+
+  REPOSITORY_NAME="${REPOSITORY_NAME:?must be defined}"
+  RELEASE_TAG="${RELEASE_TAG:?must be defined}"
+
+  HEADER=<(cat <<RELEASE_NOTES_HEADER
+- - -
+## [${RELEASE_TAG}](https://github.com/${REPOSITORY_NAME}/releases/tag/${RELEASE_TAG})
+Date: $(date +"%d %B %Y")
+
+RELEASE_NOTES_HEADER
+)
+  cat "${HEADER}" "release_notes.md" > "$temp_file"
+  mv "${temp_file}" "release_notes.md"
+  git add "release_notes.md"
+}
+
+update_version_number() {
+  local version_number
+
+  # Get the current version number
+  version_number=$(read_version_number)
+
+  # Ask for the new one
+  new_version_number=$(prompt "Enter version number [${version_number}]: ")
+
+  # Use the current version if none was specified
+  if [[ -z $new_version_number ]]; then
+    new_version_number=$version_number
+  fi
+
+  # Put it back
+  write_version_number "${new_version_number}"
+  echo "${new_version_number}"
+}
+
+prompt() {
+  local input
+  echo -n "==> $1" >&2
+  read -r input
+  echo "$input"
+}
+
+read_version_number() {
+  cat "version"
+}
+
+write_version_number() {
+  echo "$1" > "version"
+  git add "version"
+}
+
+commit_message() {
+  RELEASE_TAG="${RELEASE_TAG:?must be defined}"
+
+  cat <<COMMIT_MESSAGE
+Preparing release ${RELEASE_TAG}
+#
+# To abort: Empty this file, Save and exit
+COMMIT_MESSAGE
+}
+
+branch_name() {
+  git symbolic-ref --short HEAD
+}
+
+github_api_request() {
+  GITHUB_TOKEN="${GITHUB_TOKEN:-$(github_token)}"
+  curl -s -H "Authorization: token $GITHUB_TOKEN" "$@"
+}
+
+github_token() {
+  git credential fill <<<"host=github.com" | awk -F '=' '/password/{print $2}'
+}

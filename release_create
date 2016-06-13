@@ -1,0 +1,23 @@
+#!/bin/bash
+
+# shellcheck source=common
+. "$(dirname "$0")/common"
+
+main() {
+  pushd "$1"; shift
+
+  verify_branch
+
+  identify_repo
+  echo "==> Repository identified as: ${REPOSITORY_NAME}"
+
+  update_release_numbers
+
+  echo "==> Updating release notes for ${RELEASE_TAG}"
+  tag_release_notes
+
+  create_release_branch
+  git commit -eF <(commit_message)
+}
+
+main "$@"

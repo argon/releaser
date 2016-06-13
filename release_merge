@@ -1,0 +1,48 @@
+#!/bin/bash
+
+# shellcheck source=common
+source "$(dirname "$0")/common"
+
+main() {
+  pushd "$1"
+
+  identify_repo
+  identify_release
+
+  echo "==> Merging Release"
+  merge_to_develop
+
+  echo "==> Deleting remote branch"
+  delete_remote_branch
+
+  echo "==> Switching to develop"
+  git checkout develop
+  git pull
+
+  echo "==> Deleting local branch"
+  git branch -d "${BRANCH_NAME}"
+}
+
+merge_to_develop() {
+  REQUEST=$(cat <<END_REQUEST
+{
+  "base": "develop",
+  "head": "${BRANCH_NAME}",
+  "commit_message": "Merging release: \"${RELEASE_TAG}\""
+}
+END_REQUEST
+)
+  exec 3>&1
+  HTTP_STATUS=$(github_api_request -w "%{http_code}" -o >(cat >&3) -X POST -d "${REQUEST}" "https://api.github.com/repos/${REPOSITORY_NAME}/merges")
+
+  # 201 or 204 indicate success, anything else is a failure, print the message
+  if [ ! "$HTTP_STATUS" -eq 201 ] && [ ! "$HTTP_STATUS" -eq 204 ]; then
+    exit 1
+  fi
+}
+
+delete_remote_branch() {
+  git push origin ":${BRANCH_NAME}"
+}
+
+main "$@"

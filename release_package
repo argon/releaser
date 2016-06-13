@@ -1,0 +1,178 @@
+#!/bin/bash
+
+# shellcheck source=common
+. "$(dirname "$0")/common"
+
+main() {
+  pushd "$1"; shift
+
+  identify_repo
+  identify_release
+  echo "==> Packaging release: ${RELEASE_TAG}"
+
+  merge_into_master
+  echo "==> Merged release into develop"
+
+  tag_release
+  echo "==> Tagged release ${RELEASE_TAG}"
+
+  create_github_release
+  echo "==> Created release on GitHub"
+
+  merge_develop_into_release
+
+  echo "==> Pushing merged release branch"
+  git push -u origin "$BRANCH_NAME"
+
+  echo ""
+  echo "When CI completes run release_merge"
+}
+
+merge_into_master() {
+  BRANCH_NAME="${BRANCH_NAME:?must be defined}"
+
+  if git show --oneline master | grep "${BRANCH_NAME}"; then
+    echo "X=> Already merged to master, skipping."
+    return
+  fi
+  git checkout master
+  git fetch --all
+  git reset --hard origin/master
+  git merge --no-ff --no-edit "${BRANCH_NAME}"
+  git push
+  git checkout "$BRANCH_NAME"
+}
+
+tag_release() {
+  if git rev-parse -q --verify "${RELEASE_TAG}"; then
+    echo "X=> Already tagged release, skipping."
+    return
+  fi
+  git checkout master
+  git tag -F <(release_notes | strip_hashes) "$RELEASE_TAG"
+  git push --tags
+  git checkout "$BRANCH_NAME"
+}
+
+strip_hashes() {
+  # Strip leading hashes to prevent headings being ignored by git
+  sed -e 's/^#*//'
+}
+
+create_github_release() {
+  RELEASE_BODY="$(release_notes | jq -s -R .)"
+  REQUEST=$(cat <<END_REQUEST
+{
+  "tag_name": "${RELEASE_TAG}",
+  "name": "${RELEASE_TAG}",
+  "body": ${RELEASE_BODY}
+}
+END_REQUEST
+)
+  REPOSITORY_NAME="${REPOSITORY_NAME:?must be defined}"
+  echo "==> Creating GitHub release" >&2
+  github_api_request -X POST -d "${REQUEST}" "https://api.github.com/repos/${REPOSITORY_NAME}/releases"
+}
+
+merge_develop_into_release() {
+  pre_commit_ref=$(git rev-parse HEAD)
+  if merge_from_develop; then
+    # Merge was successful, no conflicts. Amend release notes
+    amend_release_notes
+
+    if [ "$pre_commit_ref" == "$(git rev-parse HEAD)" ]; then
+      # The commit ID is the same so no merge occurred
+      git commit -m "Amend release notes"
+    else
+      git commit --amend --no-edit
+    fi
+  else
+    # Merge conflict occurred, prepare release notes for amend
+    amend_release_notes
+
+    # Test whether there are unstaged changes or pending conflicts
+    if git status --porcelain -uno | grep -q -E "^(U|.\w)"; then
+      echo "There are still pending changes, please commit them and push"
+
+      exit 1
+    else
+      git commit --no-edit
+    fi
+  fi
+}
+
+merge_from_develop() {
+  git checkout develop
+  git pull --rebase
+  git checkout "${BRANCH_NAME}"
+  git merge --no-ff --no-edit develop
+}
+
+amend_release_notes() {
+  FILE_NAME="release_notes.md"
+  (printf "### Features\n\n### Fixes\n\n"; cat "$FILE_NAME") > "${FILE_NAME}.tmp"
+  mv "${FILE_NAME}.tmp" "$FILE_NAME"
+
+  echo "==> New additions to develop since release branch:"
+  git diff "$(git merge-base develop HEAD)..develop" -- "$FILE_NAME"
+  read -r -p "Press Return to edit release notes (move new additions to top section)"
+
+  "$EDITOR" "$FILE_NAME"
+
+  echo "==> Adding release notes to index"
+  git add "$FILE_NAME"
+}
+
+prompt() {
+  local input
+  echo -n "==> $1" >&2
+  read -r input
+  echo "$input"
+}
+
+read_version_number() {
+  cat "version"
+}
+
+write_version_number() {
+  echo "$1" > "version"
+}
+
+update_version_number() {
+  local version_number
+
+  # Get the current version number
+  version_number=$(read_version_number)
+
+  # Ask for the new one
+  new_version_number=$(prompt "Enter version number [${version_number}]: ")
+
+  # Use the current version if none was specified
+  if [[ -z $new_version_number ]]; then
+    new_version_number=$version_number
+  fi
+
+  # Put it back
+  write_version_number "${new_version_number}"
+  echo "${new_version_number}"
+}
+
+release_notes() {
+  # http://stackoverflow.com/a/4858011/1560731
+  sed -n -e '/### Features/{p' -e ':a' -e 'n' -e'/- - -/q' -e 'p' -e 'ba' -e '}' release_notes.md
+}
+
+branch_name() {
+  git symbolic-ref --short HEAD
+}
+
+github_api_request() {
+  GITHUB_TOKEN="${GITHUB_TOKEN:-$(github_token)}"
+  curl -s -H "Authorization: token $GITHUB_TOKEN" "$@"
+}
+
+github_token() {
+  git credential fill <<<"host=github.com" | awk -F '=' '/password/{print $2}'
+}
+
+main "$@"
