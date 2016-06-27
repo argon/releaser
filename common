@@ -73,14 +73,14 @@ tag_release_notes() {
   REPOSITORY_NAME="${REPOSITORY_NAME:?must be defined}"
   RELEASE_TAG="${RELEASE_TAG:?must be defined}"
 
-  HEADER=<(cat <<RELEASE_NOTES_HEADER
+  cat <<RELEASE_NOTES_HEADER > "$temp_file"
 - - -
 ## [${RELEASE_TAG}](https://github.com/${REPOSITORY_NAME}/releases/tag/${RELEASE_TAG})
 Date: $(date +"%d %B %Y")
 
 RELEASE_NOTES_HEADER
-)
-  cat "${HEADER}" "release_notes.md" > "$temp_file"
+
+  cat "release_notes.md" >> "$temp_file"
   mv "${temp_file}" "release_notes.md"
   git add "release_notes.md"
 }
