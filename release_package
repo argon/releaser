@@ -117,6 +117,7 @@ amend_release_notes() {
   git diff "$(git merge-base develop HEAD)..develop" -- "$FILE_NAME"
   read -r -p "Press Return to edit release notes (move new additions to top section)"
 
+  EDITOR="${EDITOR:-vim}"
   "$EDITOR" "$FILE_NAME"
 
   echo "==> Adding release notes to index"
