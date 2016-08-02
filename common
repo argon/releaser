@@ -38,8 +38,17 @@ verify_branch() {
 }
 
 identify_repo() {
-  COMPONENT_NAME="$(basename "$PWD")"
-  REPOSITORY_NAME="dicefm/${COMPONENT_NAME}"
+  REMOTE_URL="$(git remote get-url origin)"
+
+  if [[ "$REMOTE_URL" =~ ^https://github.com/ ]]; then
+    REPOSITORY_NAME="${REMOTE_URL##https://github.com/}"
+  elif [[ "$REMOTE_URL" =~ ^git@github.com:.*\.git$ ]]; then
+    REPOSITORY_NAME="${REMOTE_URL##git@github.com:}"
+    REPOSITORY_NAME="${REPOSITORY_NAME%%.git}"
+  else
+    echo "origin does not appear to be a valid GitHub Remote URL: ${REMOTE_URL}"
+    exit 1
+  fi
 }
 
 identify_release() {
