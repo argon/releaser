@@ -6,6 +6,8 @@
 main() {
   pushd "$1"; shift
 
+  preflight_checks
+
   identify_repo
   identify_release
   echo "==> Packaging release: ${RELEASE_TAG}"
@@ -27,6 +29,16 @@ main() {
   echo ""
   echo "When CI completes run release_merge"
 }
+
+preflight_checks() {
+  if [ ! "$(which jq)" ]; then
+    echo "jq must be installed to package release"
+    exit 1
+  fi
+
+  GITHUB_TOKEN="${GITHUB_TOKEN:?must be defined}"
+}
+
 
 merge_into_master() {
   BRANCH_NAME="${BRANCH_NAME:?must be defined}"
