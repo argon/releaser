@@ -36,6 +36,9 @@ preflight_checks() {
     exit 1
   fi
 
+  # If we don't have a GITHUB_TOKEN in the shell then attempt
+  # to get it from `git credential`
+  GITHUB_TOKEN="${GITHUB_TOKEN:-$(github_token)}"
   GITHUB_TOKEN="${GITHUB_TOKEN:?must be defined}"
 }
 
